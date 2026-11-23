@@ -1,0 +1,77 @@
+name: Discord GitHub logs
+
+on:
+  push:
+  pull_request:
+    types: [opened, reopened, closed, synchronize, ready_for_review]
+  issues:
+    types: [opened, edited, closed, reopened]
+  release:
+    types: [published]
+  workflow_run:
+    workflows: ["*"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send notification to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          WORKFLOW_URL: ${{ github.event.workflow_run.html_url }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "Missing repository secret DISCORD_WEBHOOK_URL"
+            exit 1
+          fi
+
+          case "$EVENT" in
+            push)
+              TITLE="Push a $REF"
+              DETAIL="$COMMIT_MESSAGE"
+              LINK="https://github.com/$REPO/commit/$SHA"
+              ;;
+            pull_request)
+              TITLE="Pull request: $PR_TITLE"
+              DETAIL="Acción: ${{ github.event.action }}"
+              LINK="$PR_URL"
+              ;;
+            issues)
+              TITLE="Issue: $ISSUE_TITLE"
+              DETAIL="Acción: ${{ github.event.action }}"
+              LINK="$ISSUE_URL"
+              ;;
+            release)
+              TITLE="Release: $RELEASE_TAG"
+              DETAIL="Nueva versión publicada"
+              LINK="$RELEASE_URL"
+              ;;
+            workflow_run)
+              TITLE="GitHub Actions: $WORKFLOW_NAME"
+              DETAIL="Resultado: $WORKFLOW_CONCLUSION"
+              LINK="$WORKFLOW_URL"
+              ;;
+          esac
+
+          MESSAGE="**$TITLE**"$'\n'"Repositorio: $REPO"$'\n'"Autor: $ACTOR"$'\n'"$DETAIL"$'\n'"$LINK"
+          jq -n --arg content "$MESSAGE" '{content: $content}' |
+            curl --fail-with-body -sS -H "Content-Type: application/json" \
+              -d @- "$DISCORD_WEBHOOK_URL"
