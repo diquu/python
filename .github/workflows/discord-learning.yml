@@ -36,7 +36,7 @@ jobs:
 
           for commit in commits:
               full_message = (commit.get("message") or "").strip()
-              title, separator, explanation = full_message.partition("\\n")
+              title, separator, explanation = full_message.partition("\n")
               explanation = explanation.strip()
 
               if not explanation:
