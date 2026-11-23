@@ -12,15 +12,25 @@ jobs:
   notify-discord:
     runs-on: ubuntu-latest
     steps:
-      - name: Send every commit to Discord
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Publish learning notes from Python files
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
         run: |
           python3 <<'PY'
+          import ast
           import json
           import os
           import urllib.request
-          import urllib.error
+          from pathlib import Path
 
           webhook = os.environ.get("DISCORD_WEBHOOK")
           if not webhook:
@@ -29,53 +39,70 @@ jobs:
           with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as f:
               event = json.load(f)
 
-          commits = event.get("commits", [])
-          if not commits:
-              print("No commits in this push.")
+          changed = set()
+          for commit in event.get("commits", []):
+              for key in ("added", "modified"):
+                  changed.update(name for name in commit.get(key, []) if name.endswith(".py"))
+
+          if not changed:
+              print("No Python files changed; no learning note to publish.")
               raise SystemExit(0)
 
-          for commit in commits:
-              full_message = (commit.get("message") or "").strip()
-              title, separator, explanation = full_message.partition("\n")
-              explanation = explanation.strip()
-
-              if not explanation:
-                  explanation = (
-                      "⚠️ Este commit no incluye una explicación de aprendizaje. "
-                      "En el próximo commit, agregá el detalle en el cuerpo del mensaje "
-                      "para que el diario pueda registrar exactamente qué estudiaste."
-                  )
-
-              author = (commit.get("author") or {}).get("name") or "Autor desconocido"
-              url = commit.get("url", "")
-              short_id = commit.get("id", "")[:7]
-
-              payload = {
-                  "embeds": [{
-                      "title": ("🐍 " + (title or "Nuevo commit"))[:256],
-                      "description": explanation[:4000],
-                      "url": url,
-                      "color": 3447003,
-                      "fields": [
-                          {"name": "Autor", "value": author[:1024], "inline": True},
-                          {"name": "Commit", "value": short_id or "N/D", "inline": True},
-                          {"name": "Repositorio", "value": event.get("repository", {}).get("full_name", "diquu/python"), "inline": True}
-                      ],
-                      "footer": {"text": "Diario de aprendizaje · Python"}
-                  }]
-              }
-
-              data = json.dumps(payload).encode("utf-8")
-              request = urllib.request.Request(
-                  webhook,
-                  data=data,
-                  headers={"Content-Type": "application/json"},
-                  method="POST"
-              )
-
+          notes = []
+          for filename in sorted(changed):
+              path = Path(filename)
+              if not path.is_file():
+                  continue
               try:
-                  with urllib.request.urlopen(request, timeout=20) as response:
-                      print(f"Discord notification sent for {short_id}: HTTP {response.status}")
-              except urllib.error.HTTPError as error:
-                  raise SystemExit(f"Discord returned HTTP {error.code}; check the webhook URL and permissions.")
+                  module = ast.parse(path.read_text(encoding="utf-8"))
+                  docstring = ast.get_docstring(module, clean=True) or ""
+              except (UnicodeDecodeError, SyntaxError):
+                  continue
+
+              learned = ""
+              practiced = ""
+              for line in docstring.splitlines():
+                  key, separator, value = line.partition(":")
+                  if not separator:
+                      continue
+                  if key.strip().casefold() == "aprendí":
+                      learned = value.strip()
+                  elif key.strip().casefold() == "practiqué":
+                      practiced = value.strip()
+
+              if learned:
+                  note = f"📘 **{filename}**\n**Aprendiste:** {learned}"
+                  if practiced:
+                      note += f"\n**Práctica:** {practiced}"
+                  note += f"\n[Ver archivo](https://github.com/{os.environ['GITHUB_REPOSITORY']}/blob/{os.environ['GITHUB_SHA']}/{filename})"
+                  notes.append(note)
+
+          if not notes:
+              print("Python files changed, but no module docstring with Aprendí: was found.")
+              raise SystemExit(0)
+
+          description = "\n\n".join(notes)
+          if len(description) > 4000:
+              description = description[:3980] + "\n… (texto recortado)"
+
+          payload = {
+              "embeds": [{
+                  "title": "🎓 Nuevo aprendizaje registrado",
+                  "description": description,
+                  "color": 5763719,
+                  "fields": [
+                      {"name": "Estudiante", "value": os.environ["GITHUB_ACTOR"], "inline": True},
+                      {"name": "Repositorio", "value": os.environ["GITHUB_REPOSITORY"], "inline": True}
+                  ],
+                  "footer": {"text": "Diario de aprendizaje · Python"}
+              }]
+          }
+          request = urllib.request.Request(
+              webhook,
+              data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST"
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              print(f"Discord notification sent: HTTP {response.status}")
           PY
