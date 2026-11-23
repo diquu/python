@@ -21,9 +21,10 @@ jobs:
     steps:
       - name: Send notification to Discord
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
           REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
           REF: ${{ github.ref_name }}
           ACTOR: ${{ github.actor }}
           SHA: ${{ github.sha }}
@@ -39,7 +40,7 @@ jobs:
           WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         run: |
           if [ -z "$DISCORD_WEBHOOK_URL" ]; then
-            echo "Missing repository secret DISCORD_WEBHOOK_URL"
+            echo "Missing repository secret DISCORD_WEBHOOK"
             exit 1
           fi
 
@@ -51,12 +52,12 @@ jobs:
               ;;
             pull_request)
               TITLE="Pull request: $PR_TITLE"
-              DETAIL="Acción: ${{ github.event.action }}"
+              DETAIL="Acción: $ACTION"
               LINK="$PR_URL"
               ;;
             issues)
               TITLE="Issue: $ISSUE_TITLE"
-              DETAIL="Acción: ${{ github.event.action }}"
+              DETAIL="Acción: $ACTION"
               LINK="$ISSUE_URL"
               ;;
             release)
